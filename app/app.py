@@ -168,11 +168,16 @@ with tab_play:
     live = st.toggle("Live Mapillary (fresh worldwide imagery)",
                      value=False, help="Falls back to the held-out playset when "
                      "Mapillary is grumpy. Both are fair: ground truth is known.")
-    if st.button("New photo"):
+    # buttons must be SIBLINGS: a button nested in another button's if-block never
+    # fires (the outer state is False on the inner click's rerun).
+    ba, bb = st.columns([1, 1])
+    if ba.button("New photo") or bb.button("Try another"):
         st.session_state.pop("photo", None)
+        st.session_state.pop("revealed", None)
     if "photo" not in st.session_state or st.session_state.get("photo_live") != live:
         st.session_state["photo"] = (live and live_mapillary_photo()) or random_play_photo()
         st.session_state["photo_live"] = live
+        st.session_state.pop("revealed", None)
     photo = st.session_state.get("photo")
     if photo is None:
         st.info("playset missing; run tools/make_playset.py and redeploy.")
@@ -183,27 +188,26 @@ with tab_play:
             if st.button("Reveal model guess + truth"):
                 try:
                     res = guess(photo["bytes"])
+                    st.session_state["revealed"] = res
                     if "guesses" in res:
-                        hit = res["guesses"][0]["code"] == photo["country"]
-                        for g in res["guesses"][:3]:
-                            marker = " ✓" if g["code"] == photo["country"] else ""
-                            st.markdown(f"- **{g['country']}** {g['p']*100:.0f}%{marker}")
-                        st.markdown("**Model got it.**" if hit else
-                                    f"**Model missed.** Truth: `{photo['country']}`")
                         src = "mapillary" if str(photo["title"]).startswith("mapillary:") \
                             else "playset"
                         log_feedback(photo["bytes"], photo["country"],
-                                     res["guesses"], src)
+                                     res["guesses"], src)   # once per reveal click
                 except Exception as e:
                     st.warning(f"endpoint unreachable: {e}")
+            res = st.session_state.get("revealed")
+            if res and "guesses" in res:
+                hit = res["guesses"][0]["code"] == photo["country"]
+                for g in res["guesses"][:3]:
+                    marker = " ✓" if g["code"] == photo["country"] else ""
+                    st.markdown(f"- **{g['country']}** {g['p']*100:.0f}%{marker}")
+                st.markdown("**Model got it.**" if hit else
+                            f"**Model missed.** Truth: `{photo['country']}`")
                 st.map(pd.DataFrame({"lat": [photo["lat"]], "lon": [photo["lon"]]}))
-                st.caption("Street-view photo from the OSV5M test split "
-                           "(CC-BY-SA, credits in playset/ATTRIBUTION.json). "
-                           "Every revealed round is logged and feeds the next "
-                           "retrain -- see the flywheel in docs/FEEDBACK-LOOP.md.")
-                if st.button("Try another"):
-                    st.session_state.pop("photo", None)
-                    st.rerun()
+                st.caption("Street view with known ground truth (CC-BY-SA; playset "
+                           "credits in playset/ATTRIBUTION.json). Every revealed "
+                           "round feeds the next retrain -- docs/FEEDBACK-LOOP.md.")
 
 with tab_honest:
     st.markdown("**The head has to beat CLIP zero-shot** (asking CLIP 'a photo "
