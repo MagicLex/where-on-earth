@@ -4,3 +4,4 @@ logs-job-*/
 __pycache__/
 *.pyc
 serving/_artifact/
+app/.streamlit/secrets.toml

@@ -69,6 +69,28 @@ def random_play_photo():
             "country": item["country"], "title": item["file"]}
 
 
+def log_feedback(image_bytes, true_country, guesses, source):
+    """One played round = one labeled example. The flywheel's first gear.
+
+    Appends the image + a jsonl row under data/feedback/ (HopsFS, survives the
+    pod). A scheduled job embeds these with the SAME shared module and feeds them
+    into the geo_feedback FG; the next retrain learns from every round played.
+    See docs/FEEDBACK-LOOP.md.
+    """
+    import time
+    import uuid
+    fb = ROOT / "data" / "feedback"
+    fb.mkdir(parents=True, exist_ok=True)
+    fid = uuid.uuid4().hex
+    (fb / f"{fid}.jpg").write_bytes(image_bytes)
+    row = {"id": fid, "ts": int(time.time()), "source": source,
+           "true_country": true_country,
+           "pred_top1": guesses[0]["code"] if guesses else None,
+           "correct": bool(guesses and guesses[0]["code"] == true_country)}
+    with open(fb / "feedback.jsonl", "a") as f:
+        f.write(json.dumps(row) + "\n")
+
+
 st.title("Where on earth was this taken?")
 st.caption("Frozen CLIP eyes + a country head trained on OSV5M street view. "
            "It has never seen your photo, only 512 numbers describing it.")
@@ -93,6 +115,16 @@ with tab_upload:
                     st.bar_chart(pd.DataFrame(res["guesses"]).set_index("country")["p"])
                     st.caption("Nothing is uploaded anywhere but this project's own "
                                "endpoint; the image is embedded and discarded.")
+                    st.session_state["last_upload"] = (raw, res["guesses"])
+    if "last_upload" in st.session_state:
+        iso = json.loads((ROOT / "assets" / "iso2name.json").read_text())
+        wrong = st.selectbox("Was it wrong? Tell it the real country (this trains "
+                             "the next version)", ["-"] + sorted(iso.values()))
+        if wrong != "-" and st.button("Teach it"):
+            code = next(c for c, n in iso.items() if n == wrong)
+            raw_b, gs = st.session_state.pop("last_upload")
+            log_feedback(raw_b, code, gs, "upload")
+            st.success("Logged. It goes into the next retrain.")
             except Exception as e:
                 st.warning(f"endpoint unreachable: {e}")
 
@@ -119,11 +151,18 @@ with tab_play:
                             st.markdown(f"- **{g['country']}** {g['p']*100:.0f}%{marker}")
                         st.markdown("**Model got it.**" if hit else
                                     f"**Model missed.** Truth: `{photo['country']}`")
+                        log_feedback(photo["bytes"], photo["country"],
+                                     res["guesses"], "playset")
                 except Exception as e:
                     st.warning(f"endpoint unreachable: {e}")
                 st.map(pd.DataFrame({"lat": [photo["lat"]], "lon": [photo["lon"]]}))
                 st.caption("Street-view photo from the OSV5M test split "
-                           "(CC-BY-SA, credits in playset/ATTRIBUTION.json).")
+                           "(CC-BY-SA, credits in playset/ATTRIBUTION.json). "
+                           "Every revealed round is logged and feeds the next "
+                           "retrain -- see the flywheel in docs/FEEDBACK-LOOP.md.")
+                if st.button("Try another"):
+                    st.session_state.pop("photo", None)
+                    st.rerun()
 
 with tab_honest:
     st.markdown("**The head has to beat CLIP zero-shot** (asking CLIP 'a photo "

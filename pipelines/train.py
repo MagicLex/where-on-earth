@@ -52,7 +52,20 @@ MIN_PER_COUNTRY = 80      # below this a class cannot be learned or fairly score
 TEST_CELL_FRAC = 0.15
 
 
-def load_xy():
+def load_feedback(fs):
+    """Human-labeled rounds from the app (geo_feedback FG). Training rows only --
+    the held-out cells never move, so every retrain rescores against the same bar.
+    See docs/FEEDBACK-LOOP.md."""
+    try:
+        df = fs.get_feature_group("geo_feedback", version=1).read()
+        df = df.dropna(subset=["country"])
+        print(f"feedback: +{len(df)} human-labeled rows")
+        return df[["country", "emb"]]
+    except Exception:
+        return None
+
+
+def load_xy(fs=None):
     df = load_parquets("train")
     counts = df["country"].value_counts()
     keep = counts[counts >= MIN_PER_COUNTRY].index
@@ -70,9 +83,14 @@ def load_xy():
     is_test = df["cell"].isin(test_cells).values
     X = np.stack(df["emb"].values).astype(np.float32)
     y = df["country"].values
-    print(f"split: {(~is_test).sum():,} train / {is_test.sum():,} test "
+    Xtr, ytr = X[~is_test], y[~is_test]
+    fb = load_feedback(fs) if fs is not None else None
+    if fb is not None and len(fb):
+        Xtr = np.concatenate([Xtr, np.stack(fb["emb"].values).astype(np.float32)])
+        ytr = np.concatenate([ytr, fb["country"].values])
+    print(f"split: {len(Xtr):,} train (incl. feedback) / {is_test.sum():,} test "
           f"({len(test_cells)} test cells)")
-    return X[~is_test], y[~is_test], X[is_test], y[is_test], df.loc[is_test]
+    return Xtr, ytr, X[is_test], y[is_test], df.loc[is_test]
 
 
 def top_k(proba, classes, y, k):
@@ -160,7 +178,7 @@ def main():
     import hopsworks
     import shutil
     proj = hopsworks.login()
-    Xtr, ytr, Xte, yte, df_test = load_xy()
+    Xtr, ytr, Xte, yte, df_test = load_xy(proj.get_feature_store())
 
     print("\nbaselines:", flush=True)
     base = baselines(yte, Xte, ytr)

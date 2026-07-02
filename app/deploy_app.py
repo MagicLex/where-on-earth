@@ -24,6 +24,11 @@ def main():
     if app is None:
         app = apps.create_app(name=APP_NAME, app_path=APP_PATH,
                               environment=ENV_NAME, memory=2048, cores=1.0)
+    else:
+        try:
+            app.stop()          # redeploys need a stop first ("already running")
+        except Exception:
+            pass
     app.run(await_serving=True)
     print("serving:", app.serving)
     print("URL:", app.get_url())
