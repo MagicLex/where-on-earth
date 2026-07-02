@@ -7,14 +7,12 @@ renders guesses, the honest leaderboard (including the zero-shot baseline the he
 must beat), and the accuracy world map from training.
 """
 import base64
-import io
 import json
 import random
 from pathlib import Path
 
 import hopsworks
 import pandas as pd
-import requests
 import streamlit as st
 
 DEPLOYMENT = "whereonearth"
@@ -48,28 +46,27 @@ def guess(image_bytes):
     return out["predictions"][0]
 
 
-@st.cache_data(ttl=300)
-def random_commons_photo():
-    """A random geotagged Commons photo + its true coordinates (the reveal)."""
-    s = requests.Session()
-    s.headers.update({"User-Agent": "where-on-earth demo (adminaccounts@hopsworks.ai)"})
-    lat = random.uniform(-45, 60)
-    lon = random.uniform(-120, 150)
-    r = s.get("https://commons.wikimedia.org/w/api.php", timeout=20, params={
-        "action": "query", "list": "geosearch", "gscoord": f"{lat}|{lon}",
-        "gsradius": 10000, "gsnamespace": 6, "gslimit": 20, "format": "json"})
-    hits = r.json().get("query", {}).get("geosearch", [])
-    if not hits:
+@st.cache_data
+def load_playset():
+    """Held-out OSV5M street-view images with ground truth (see tools/make_playset.py).
+
+    In-distribution on purpose: the model was trained on street view, so the game
+    is fair. Random Commons photos (portraits, food, aerials) made it look broken.
+    """
+    p = ROOT / "app" / "playset" / "playset.json"
+    if not p.exists():
+        return []
+    return json.loads(p.read_text())
+
+
+def random_play_photo():
+    ps = load_playset()
+    if not ps:
         return None
-    h = random.choice(hits)
-    r = s.get("https://commons.wikimedia.org/w/api.php", timeout=20, params={
-        "action": "query", "titles": h["title"], "prop": "imageinfo",
-        "iiprop": "url", "iiurlwidth": 640, "format": "json"})
-    info = list(r.json()["query"]["pages"].values())[0].get("imageinfo")
-    if not info:
-        return None
-    img = s.get(info[0]["thumburl"], timeout=30).content
-    return {"bytes": img, "lat": h["lat"], "lon": h["lon"], "title": h["title"]}
+    item = random.choice(ps)
+    f = ROOT / "app" / "playset" / item["file"]
+    return {"bytes": f.read_bytes(), "lat": item["lat"], "lon": item["lon"],
+            "country": item["country"], "title": item["file"]}
 
 
 st.title("Where on earth was this taken?")
@@ -100,15 +97,14 @@ with tab_upload:
                 st.warning(f"endpoint unreachable: {e}")
 
 with tab_play:
-    st.markdown("A random geotagged photo from Wikimedia Commons. Guess first, "
-                "then see whether you beat the model.")
+    st.markdown("A real held-out OSV5M street-view photo the model never trained "
+                "on. Guess the country first, then see whether you beat it.")
     if st.button("New photo"):
         st.session_state.pop("photo", None)
-        random_commons_photo.clear()
-    photo = st.session_state.get("photo") or random_commons_photo()
+    photo = st.session_state.get("photo") or random_play_photo()
     st.session_state["photo"] = photo
     if photo is None:
-        st.info("Commons gave nothing for that random spot; hit New photo again.")
+        st.info("playset missing; run tools/make_playset.py and redeploy.")
     else:
         c1, c2 = st.columns([1, 1])
         c1.image(photo["bytes"], use_container_width=True)
@@ -117,13 +113,17 @@ with tab_play:
                 try:
                     res = guess(photo["bytes"])
                     if "guesses" in res:
+                        hit = res["guesses"][0]["code"] == photo["country"]
                         for g in res["guesses"][:3]:
-                            st.markdown(f"- **{g['country']}** {g['p']*100:.0f}%")
+                            marker = " ✓" if g["code"] == photo["country"] else ""
+                            st.markdown(f"- **{g['country']}** {g['p']*100:.0f}%{marker}")
+                        st.markdown("**Model got it.**" if hit else
+                                    f"**Model missed.** Truth: `{photo['country']}`")
                 except Exception as e:
                     st.warning(f"endpoint unreachable: {e}")
                 st.map(pd.DataFrame({"lat": [photo["lat"]], "lon": [photo["lon"]]}))
-                st.caption(f"True location: {photo['lat']:.3f}, {photo['lon']:.3f} "
-                           f"({photo['title']})")
+                st.caption("Street-view photo from the OSV5M test split "
+                           "(CC-BY-SA, credits in playset/ATTRIBUTION.json).")
 
 with tab_honest:
     st.markdown("**The head has to beat CLIP zero-shot** (asking CLIP 'a photo "

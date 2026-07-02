@@ -64,7 +64,7 @@ label per photo -- nobody ever re-embeds.
 flowchart LR
     subgraph sources
       O[OSV5M 5.1M photos] --> E
-      W[Wikimedia Commons live] --> APP
+      P[OSV5M held-out playset] --> APP
     end
     subgraph Feature
       E[shard-parallel embed jobs<br/>frozen CLIP ViT-B/32] --> FG[(geo_image_embeddings<br/>512-d vectors, no pixels)]
@@ -126,5 +126,6 @@ sklearn on vectors, serving embeds one photo per request.
 ## The demo
 
 Upload a photo and get a country distribution, or play a round against the model
-on a random geotagged Wikimedia Commons photo -- it guesses, then the map reveals
-the truth. The honesty tab shows the leaderboard including the baselines.
+on a real held-out OSV5M street-view photo -- you guess, it guesses, the map
+reveals the truth. The honesty tab shows the leaderboard including the baselines.
+The play-set ships in-repo with per-author attribution (CC-BY-SA).
