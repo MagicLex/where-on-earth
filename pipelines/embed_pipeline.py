@@ -77,12 +77,19 @@ def process_shard(split, shard, meta, kept_counter, cap, session):
 
     url = f"{BASE}/{split}/{shard:02d}.zip"
     zpath = os.path.join(SCRATCH, f"{split}_{shard:02d}.zip")
-    t0 = time.time()
-    with session.get(url, stream=True, timeout=60) as r:
-        r.raise_for_status()
-        with open(zpath, "wb") as f:
-            for chunk in r.iter_content(1 << 20):
-                f.write(chunk)
+    for attempt in range(3):          # truncated streams happen; verify before use
+        t0 = time.time()
+        with session.get(url, stream=True, timeout=60) as r:
+            r.raise_for_status()
+            with open(zpath, "wb") as f:
+                for chunk in r.iter_content(1 << 20):
+                    f.write(chunk)
+        if zipfile.is_zipfile(zpath):
+            break
+        print(f"shard {shard}: corrupt download (attempt {attempt+1}), retrying", flush=True)
+        os.remove(zpath)
+    else:
+        raise RuntimeError(f"shard {shard}: 3 corrupt downloads, giving up")
     print(f"shard {shard}: downloaded {os.path.getsize(zpath)/1e9:.2f} GB "
           f"in {time.time()-t0:.0f}s", flush=True)
 

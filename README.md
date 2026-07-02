@@ -12,9 +12,10 @@ training at all) to justify existing.
 
 ## The result
 
-Landing: the embed fleet and training run are in flight. This section gets the
-held-out top-1/top-5 table (heads vs majority-class vs CLIP zero-shot) and the
-accuracy world map when they finish.
+The corpus is in: **354,064 train embeddings across 217 countries** (31 OSV5M zip
+shards, per-country cap so DE/US/FR/RU/JP stop at 5,100 while the median country
+keeps ~900) plus 20,512 held-out test embeddings. The training run is in flight;
+this table gets the held-out numbers when it lands.
 
 | metric | value |
 |---|---:|
