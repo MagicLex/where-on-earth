@@ -24,10 +24,13 @@ serve:               ## deploy the whereonearth KServe endpoint
 app:                 ## deploy the Streamlit front-end
 	python3 app/deploy_app.py
 
+rescore:             ## re-score every played photo against the deployed model
+	python3 pipelines/rescore_pipeline.py
+
 feedback-job:        ## ingest played rounds into the geo_feedback FG (schedule daily)
 	hops job deploy geo-feedback pipelines/feedback_pipeline.py \
 		--env torch-training-pipeline --run --wait --overwrite
 
 help:
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | sed 's/:.*##/  --/'
-.PHONY: meta embed-fleet prompts-job insert train-job serve app feedback-job help
+.PHONY: meta embed-fleet prompts-job insert train-job serve app rescore feedback-job help

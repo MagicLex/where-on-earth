@@ -53,6 +53,9 @@ def _bundle(proj, version=None):
     for f in ("model.joblib", "iso2name.json"):
         shutil.copy(os.path.join(src, f), os.path.join(d, f))
     shutil.copy(os.path.join(ROOT, "embed_features.py"), os.path.join(d, "embed_features.py"))
+    # the predictor announces which champion it serves; the rescore loop keys on it
+    import json
+    json.dump({"model_version": version}, open(os.path.join(d, "version.json"), "w"))
     return d, version
 
 

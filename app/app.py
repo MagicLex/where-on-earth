@@ -16,7 +16,6 @@ import pandas as pd
 import streamlit as st
 
 DEPLOYMENT = "whereonearth"
-LEADERBOARD_FG = "geo_leaderboard"
 ROOT = Path(__file__).resolve().parent.parent
 
 st.set_page_config(page_title="where on earth", page_icon="globe_with_meridians",
@@ -31,13 +30,6 @@ def _project():
 @st.cache_resource
 def _deployment():
     return _project().get_model_serving().get_deployment(DEPLOYMENT)
-
-
-@st.cache_data(ttl=3600)
-def get_leaderboard():
-    fs = _project().get_feature_store()
-    df = fs.get_feature_group(LEADERBOARD_FG, version=1).read()
-    return df.sort_values("top1", ascending=False).reset_index(drop=True)
 
 
 def guess(image_bytes):
@@ -103,7 +95,25 @@ def live_mapillary_photo():
     return None
 
 
-def log_feedback(image_bytes, true_country, guesses, source):
+def flag(code):
+    """ISO2 -> flag emoji, pure python."""
+    try:
+        return "".join(chr(0x1F1E6 + ord(c) - 65) for c in code.upper()[:2])
+    except Exception:
+        return ""
+
+
+def render_guesses(res, truth=None):
+    """Top guesses as flag + name + confidence bar. One renderer, both tabs."""
+    for g in res["guesses"]:
+        hit = truth is not None and g["code"] == truth
+        label = f"{flag(g['code'])} **{g['country']}**" + (" ✓" if hit else "")
+        a, b = st.columns([2, 3])
+        a.markdown(label)
+        b.progress(min(1.0, float(g["p"])), text=f"{g['p']*100:.0f}%")
+
+
+def log_feedback(image_bytes, true_country, guesses, source, model_version=None):
     """One played round = one labeled example. The flywheel's first gear.
 
     Appends the image + a jsonl row under data/feedback/ (HopsFS, survives the
@@ -118,7 +128,7 @@ def log_feedback(image_bytes, true_country, guesses, source):
     fid = uuid.uuid4().hex
     (fb / f"{fid}.jpg").write_bytes(image_bytes)
     row = {"id": fid, "ts": int(time.time()), "source": source,
-           "true_country": true_country,
+           "true_country": true_country, "model_version": model_version,
            "pred_top1": guesses[0]["code"] if guesses else None,
            "correct": bool(guesses and guesses[0]["code"] == true_country)}
     with open(fb / "feedback.jsonl", "a") as f:
@@ -129,38 +139,57 @@ st.title("Where on earth was this taken?")
 st.caption("Frozen CLIP eyes + a country head trained on OSV5M street view. "
            "It has never seen your photo, only 512 numbers describing it.")
 
-tab_upload, tab_play, tab_honest = st.tabs(["Upload a photo", "Play vs the model",
-                                            "Is it actually good?"])
+tab_upload, tab_play = st.tabs(["Your photo", "Play vs the model"])
 
 with tab_upload:
-    up = st.file_uploader("JPEG/PNG", type=["jpg", "jpeg", "png"])
-    if up is not None:
-        raw = up.read()
-        col1, col2 = st.columns([1, 1])
+    # two ways in: paste a screenshot (chat_input accepts clipboard files on
+    # recent streamlit) or classic upload. Either lands in session state so the
+    # verdict survives reruns and the endpoint is hit once per image.
+    new_raw = None
+    try:
+        msg = st.chat_input("Paste a screenshot here (Ctrl+V) or attach a photo",
+                            accept_file=True, file_type=["jpg", "jpeg", "png"])
+        if msg and msg.files:
+            new_raw = msg.files[0].read()
+    except TypeError:
+        pass                       # older streamlit: uploader below still works
+    up = st.file_uploader("...or upload", type=["jpg", "jpeg", "png"],
+                          label_visibility="collapsed")
+    if up is not None and st.session_state.get("upload_name") != up.name:
+        new_raw = up.read()
+        st.session_state["upload_name"] = up.name
+    if new_raw:
+        st.session_state["upload_raw"] = new_raw
+        st.session_state.pop("upload_res", None)
+
+    raw = st.session_state.get("upload_raw")
+    if raw:
+        col1, col2 = st.columns([1, 1], gap="large")
         col1.image(raw, use_container_width=True)
-        with col2, st.spinner("Looking at it..."):
-            try:
-                res = guess(raw)
-                if "error" in res:
-                    st.error(res["error"])
-                else:
-                    top = res["guesses"][0]
-                    st.markdown(f"## {top['country']}  ({top['p']*100:.0f}%)")
-                    st.bar_chart(pd.DataFrame(res["guesses"]).set_index("country")["p"])
-                    st.caption("Nothing is uploaded anywhere but this project's own "
-                               "endpoint; the image is embedded and discarded.")
-                    st.session_state["last_upload"] = (raw, res["guesses"])
-            except Exception as e:
-                st.warning(f"endpoint unreachable: {e}")
-    if "last_upload" in st.session_state:
-        iso = json.loads((ROOT / "assets" / "iso2name.json").read_text())
-        wrong = st.selectbox("Was it wrong? Tell it the real country (this trains "
-                             "the next version)", ["-"] + sorted(iso.values()))
-        if wrong != "-" and st.button("Teach it"):
-            code = next(c for c, n in iso.items() if n == wrong)
-            raw_b, gs = st.session_state.pop("last_upload")
-            log_feedback(raw_b, code, gs, "upload")
-            st.success("Logged. It goes into the next retrain.")
+        with col2:
+            if "upload_res" not in st.session_state:
+                with st.spinner("Looking at it..."):
+                    try:
+                        st.session_state["upload_res"] = guess(raw)
+                    except Exception as e:
+                        st.warning(f"endpoint unreachable: {e}")
+            res = st.session_state.get("upload_res")
+            if res and "error" in res:
+                st.error(res["error"])
+            elif res:
+                top = res["guesses"][0]
+                st.markdown(f"## {flag(top['code'])} {top['country']}")
+                render_guesses(res)
+                st.caption("Nothing is uploaded anywhere but this project's own "
+                           "endpoint; the image is embedded and discarded.")
+                iso = json.loads((ROOT / "assets" / "iso2name.json").read_text())
+                wrong = st.selectbox("Was it wrong? Teach it the real country",
+                                     ["-"] + sorted(iso.values()))
+                if wrong != "-" and st.button("Teach it"):
+                    code = next(c for c, n in iso.items() if n == wrong)
+                    log_feedback(raw, code, res["guesses"], "upload",
+                                 res.get("model_version"))
+                    st.success("Logged. It goes into the next retrain.")
 
 with tab_play:
     st.markdown("Real street view the model never trained on. Guess the country "
@@ -175,17 +204,33 @@ with tab_play:
         st.session_state.pop("photo", None)
         st.session_state.pop("revealed", None)
     if "photo" not in st.session_state or st.session_state.get("photo_live") != live:
-        st.session_state["photo"] = (live and live_mapillary_photo()) or random_play_photo()
+        mly = live_mapillary_photo() if live else None
+        if live:
+            k = "mly_ok" if mly else "mly_fail"
+            st.session_state[k] = st.session_state.get(k, 0) + 1
+        st.session_state["photo"] = mly or random_play_photo()
         st.session_state["photo_live"] = live
         st.session_state.pop("revealed", None)
     photo = st.session_state.get("photo")
     if photo is None:
         st.info("playset missing; run tools/make_playset.py and redeploy.")
     else:
-        c1, c2 = st.columns([1, 1])
+        is_live = str(photo["title"]).startswith("mapillary:")
+        if is_live:
+            st.success(f"🟢 LIVE Mapillary ({photo['title'].split(':')[1]})", icon="🛰️")
+        elif live:
+            st.warning("Mapillary gave nothing for those anchors. This one is from "
+                       "the held-out playset.", icon="📦")
+        else:
+            st.caption("📦 held-out playset")
+        ok, fail = st.session_state.get("mly_ok", 0), st.session_state.get("mly_fail", 0)
+        if live and (ok + fail):
+            st.caption(f"live hit rate this session: {ok}/{ok+fail}")
+        c1, c2 = st.columns([1, 1], gap="large")
         c1.image(photo["bytes"], use_container_width=True)
         with c2:
-            if st.button("Reveal model guess + truth"):
+            if st.button("Reveal model guess + truth", type="primary",
+                         use_container_width=True):
                 try:
                     res = guess(photo["bytes"])
                     st.session_state["revealed"] = res
@@ -193,32 +238,26 @@ with tab_play:
                         src = "mapillary" if str(photo["title"]).startswith("mapillary:") \
                             else "playset"
                         log_feedback(photo["bytes"], photo["country"],
-                                     res["guesses"], src)   # once per reveal click
+                                     res["guesses"], src,
+                                     res.get("model_version"))   # once per reveal
                 except Exception as e:
                     st.warning(f"endpoint unreachable: {e}")
             res = st.session_state.get("revealed")
             if res and "guesses" in res:
                 hit = res["guesses"][0]["code"] == photo["country"]
-                for g in res["guesses"][:3]:
-                    marker = " ✓" if g["code"] == photo["country"] else ""
-                    st.markdown(f"- **{g['country']}** {g['p']*100:.0f}%{marker}")
-                st.markdown("**Model got it.**" if hit else
-                            f"**Model missed.** Truth: `{photo['country']}`")
-                st.map(pd.DataFrame({"lat": [photo["lat"]], "lon": [photo["lon"]]}))
+                if hit:
+                    st.success(f"Model got it: {flag(photo['country'])} "
+                               f"(v{res.get('model_version', '?')})")
+                else:
+                    st.error(f"Model missed. Truth: {flag(photo['country'])} "
+                             f"`{photo['country']}` (v{res.get('model_version', '?')})")
+                render_guesses(res, truth=photo["country"])
+                st.map(pd.DataFrame({"lat": [photo["lat"]], "lon": [photo["lon"]]}),
+                       height=220)
                 st.caption("Street view with known ground truth (CC-BY-SA; playset "
                            "credits in playset/ATTRIBUTION.json). Every revealed "
                            "round feeds the next retrain -- docs/FEEDBACK-LOOP.md.")
 
-with tab_honest:
-    st.markdown("**The head has to beat CLIP zero-shot** (asking CLIP 'a photo "
-                "taken in X' with no training at all) or it has no reason to exist.")
-    try:
-        st.dataframe(get_leaderboard()[["config", "top1", "top5"]],
-                     use_container_width=True, hide_index=True)
-    except Exception as e:
-        st.info(f"leaderboard not materialized yet: {e}")
-    for img, cap in [("accuracy_map.png", "Where the model knows the world"),
-                     ("best_worst.png", "Hardest and easiest countries")]:
-        p = ROOT / "assets" / img
-        if p.exists():
-            st.image(str(p), caption=cap)
+st.caption("top-1 52.3% / top-5 79.8% over 173 countries, held-out places. "
+           "Numbers, caveats and the eval maps: "
+           "[github.com/MagicLex/where-on-earth](https://github.com/MagicLex/where-on-earth)")

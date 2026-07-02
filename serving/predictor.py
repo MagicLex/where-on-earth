@@ -28,6 +28,10 @@ class Predict:
         import json
         self.head = joblib.load(os.path.join(_PATH, "model.joblib"))
         self.iso2name = json.load(open(os.path.join(_PATH, "iso2name.json")))
+        try:
+            self.model_version = json.load(open(os.path.join(_PATH, "version.json")))["model_version"]
+        except Exception:
+            self.model_version = 1
         self._session = None
         # warm the backbone at boot, not on the first user request
         from PIL import Image
@@ -78,7 +82,7 @@ class Predict:
                 continue
             p = proba[vi]; vi += 1
             idx = np.argsort(-p)[:TOP_K]
-            results.append({"guesses": [
+            results.append({"model_version": self.model_version, "guesses": [
                 {"code": str(classes[i]),
                  "country": self.iso2name.get(str(classes[i]), str(classes[i])),
                  "p": round(float(p[i]), 4)} for i in idx]})
