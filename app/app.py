@@ -69,6 +69,40 @@ def random_play_photo():
             "country": item["country"], "title": item["file"]}
 
 
+def live_mapillary_photo():
+    """Fresh worldwide street view, live from Mapillary (CC-BY-SA).
+
+    Anchored on random playset points so the true country is known without
+    reverse geocoding. Dense areas 500 on Mapillary's side ("reduce data"), so the
+    bbox is tiny and a failed anchor just falls through to the next one.
+    """
+    import requests
+    tok = st.secrets.get("MAPILLARY_TOKEN")
+    ps = load_playset()
+    if not tok or not ps:
+        return None
+    s = requests.Session()
+    for item in random.sample(ps, min(5, len(ps))):
+        lon, lat = item["lon"], item["lat"]
+        bbox = f"{lon-0.004},{lat-0.004},{lon+0.004},{lat+0.004}"
+        try:
+            r = s.get("https://graph.mapillary.com/images", timeout=25,
+                      params={"access_token": tok, "fields": "id,thumb_1024_url",
+                              "bbox": bbox, "limit": 10})
+            data = r.json().get("data", []) if r.status_code == 200 else []
+            if not data:
+                continue
+            pick = random.choice(data)
+            img = s.get(pick["thumb_1024_url"], timeout=25)
+            if img.status_code != 200:
+                continue
+            return {"bytes": img.content, "lat": lat, "lon": lon,
+                    "country": item["country"], "title": f"mapillary:{pick['id']}"}
+        except Exception:
+            continue
+    return None
+
+
 def log_feedback(image_bytes, true_country, guesses, source):
     """One played round = one labeled example. The flywheel's first gear.
 
@@ -116,6 +150,8 @@ with tab_upload:
                     st.caption("Nothing is uploaded anywhere but this project's own "
                                "endpoint; the image is embedded and discarded.")
                     st.session_state["last_upload"] = (raw, res["guesses"])
+            except Exception as e:
+                st.warning(f"endpoint unreachable: {e}")
     if "last_upload" in st.session_state:
         iso = json.loads((ROOT / "assets" / "iso2name.json").read_text())
         wrong = st.selectbox("Was it wrong? Tell it the real country (this trains "
@@ -125,16 +161,19 @@ with tab_upload:
             raw_b, gs = st.session_state.pop("last_upload")
             log_feedback(raw_b, code, gs, "upload")
             st.success("Logged. It goes into the next retrain.")
-            except Exception as e:
-                st.warning(f"endpoint unreachable: {e}")
 
 with tab_play:
-    st.markdown("A real held-out OSV5M street-view photo the model never trained "
-                "on. Guess the country first, then see whether you beat it.")
+    st.markdown("Real street view the model never trained on. Guess the country "
+                "first, then see whether you beat it.")
+    live = st.toggle("Live Mapillary (fresh worldwide imagery)",
+                     value=False, help="Falls back to the held-out playset when "
+                     "Mapillary is grumpy. Both are fair: ground truth is known.")
     if st.button("New photo"):
         st.session_state.pop("photo", None)
-    photo = st.session_state.get("photo") or random_play_photo()
-    st.session_state["photo"] = photo
+    if "photo" not in st.session_state or st.session_state.get("photo_live") != live:
+        st.session_state["photo"] = (live and live_mapillary_photo()) or random_play_photo()
+        st.session_state["photo_live"] = live
+    photo = st.session_state.get("photo")
     if photo is None:
         st.info("playset missing; run tools/make_playset.py and redeploy.")
     else:
@@ -151,8 +190,10 @@ with tab_play:
                             st.markdown(f"- **{g['country']}** {g['p']*100:.0f}%{marker}")
                         st.markdown("**Model got it.**" if hit else
                                     f"**Model missed.** Truth: `{photo['country']}`")
+                        src = "mapillary" if str(photo["title"]).startswith("mapillary:") \
+                            else "playset"
                         log_feedback(photo["bytes"], photo["country"],
-                                     res["guesses"], "playset")
+                                     res["guesses"], src)
                 except Exception as e:
                     st.warning(f"endpoint unreachable: {e}")
                 st.map(pd.DataFrame({"lat": [photo["lat"]], "lon": [photo["lon"]]}))
