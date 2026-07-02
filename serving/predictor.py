@@ -42,15 +42,20 @@ class Predict:
 
     def _to_image(self, item):
         from PIL import Image
-        if item.get("b64"):
-            raw = base64.b64decode(item["b64"])
-        elif item.get("url"):
-            raw = self._sess().get(item["url"], timeout=20).content
-        else:
-            return None
-        img = Image.open(io.BytesIO(raw)).convert("RGB")
-        img.thumbnail((512, 512))
-        return img
+        try:
+            if item.get("b64"):
+                raw = base64.b64decode(item["b64"])
+            elif item.get("url"):
+                r = self._sess().get(item["url"], timeout=20)
+                r.raise_for_status()
+                raw = r.content
+            else:
+                return None
+            img = Image.open(io.BytesIO(raw)).convert("RGB")
+            img.thumbnail((512, 512))
+            return img
+        except Exception:
+            return None          # bad URL / not an image -> per-item error, not a 500
 
     def predict(self, inputs):
         if isinstance(inputs, dict):

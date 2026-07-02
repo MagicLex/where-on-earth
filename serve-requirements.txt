@@ -1,0 +1,7 @@
+# Serving stack for the whereonearth predictor: the trained sklearn head (joblib)
+# + the frozen CLIP backbone (transformers). Torch ships with the base image.
+scikit-learn==1.8.0
+joblib
+transformers
+pillow
+requests
