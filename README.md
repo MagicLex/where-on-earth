@@ -129,3 +129,5 @@ Upload a photo and get a country distribution, or play a round against the model
 on a real held-out OSV5M street-view photo -- you guess, it guesses, the map
 reveals the truth. The honesty tab shows the leaderboard including the baselines.
 The play-set ships in-repo with per-author attribution (CC-BY-SA).
+
+![The app](assets/app_capture.jpg)
