@@ -147,12 +147,15 @@ with tab_upload:
     # verdict survives reruns and the endpoint is hit once per image.
     new_raw = None
     try:
-        msg = st.chat_input("Paste a screenshot here (Ctrl+V) or attach a photo",
+        msg = st.chat_input("Click here, then paste your screenshot (Cmd+V / "
+                            "Ctrl+V) or attach a photo",
                             accept_file=True, file_type=["jpg", "jpeg", "png"])
         if msg and msg.files:
             new_raw = msg.files[0].read()
+        st.caption("paste zone active: click the box above first, then Cmd+V "
+                   "(mac) / Ctrl+V")
     except TypeError:
-        pass                       # older streamlit: uploader below still works
+        st.caption("this streamlit build has no paste support; use the uploader")
     up = st.file_uploader("...or upload", type=["jpg", "jpeg", "png"],
                           label_visibility="collapsed")
     if up is not None and st.session_state.get("upload_name") != up.name:
@@ -178,8 +181,14 @@ with tab_upload:
                 st.error(res["error"])
             elif res:
                 top = res["guesses"][0]
-                st.markdown(f"## {flag(top['code'])} {top['country']}")
+                st.markdown(f"## {flag(top['code'])} {top['country']} "
+                            f"<small>(model v{res.get('model_version', '?')})</small>",
+                            unsafe_allow_html=True)
                 render_guesses(res)
+                if st.button("Guess again", help="Same photo, fresh call. Useful "
+                             "after a retrain: the model version may have moved."):
+                    st.session_state.pop("upload_res", None)
+                    st.rerun()
                 st.caption("Nothing is uploaded anywhere but this project's own "
                            "endpoint; the image is embedded and discarded.")
                 iso = json.loads((ROOT / "assets" / "iso2name.json").read_text())
