@@ -169,8 +169,10 @@ def main():
     heads = {
         "centroid": Centroid(),
         "logreg": LogisticRegression(max_iter=2000, C=10.0, n_jobs=-1),
-        "mlp": MLPClassifier(hidden_layer_sizes=(512,), max_iter=60,
-                             early_stopping=True, random_state=SEED),
+        # early_stopping=True breaks on string labels in this sklearn (isnan on str
+        # y_pred); plateau-based n_iter_no_change stopping works fine without it.
+        "mlp": MLPClassifier(hidden_layer_sizes=(512,), max_iter=30,
+                             n_iter_no_change=3, random_state=SEED),
     }
     results, fitted = [], {}
     for name, clf in heads.items():

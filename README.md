@@ -84,6 +84,19 @@ embed_features.py            shared CLIP embedding (no train/serve skew)
 
 Clone into a Hopsworks project on the `/hopsfs/...` FUSE mount.
 
+**Fast path (skip ~10h of CPU):** the precomputed embeddings are a
+[release asset](https://github.com/MagicLex/where-on-earth/releases/tag/embeddings-v1).
+
+```bash
+mkdir -p data/emb
+curl -L https://github.com/MagicLex/where-on-earth/releases/download/embeddings-v1/embeddings_train.tar | tar x -C data/emb
+curl -L https://github.com/MagicLex/where-on-earth/releases/download/embeddings-v1/embeddings_test.tar  | tar x -C data/emb
+curl -Lo data/country_text_emb.parquet https://github.com/MagicLex/where-on-earth/releases/download/embeddings-v1/country_text_emb.parquet
+make insert && make train-job && make serve && make app
+```
+
+**Full path (rebuild the vectors yourself):**
+
 ```bash
 curl -o data/train.csv https://huggingface.co/datasets/osv5m/osv5m/resolve/main/train.csv
 curl -o data/test.csv  https://huggingface.co/datasets/osv5m/osv5m/resolve/main/test.csv
