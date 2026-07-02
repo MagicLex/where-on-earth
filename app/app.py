@@ -208,10 +208,26 @@ with tab_play:
                      "Mapillary is grumpy. Both are fair: ground truth is known.")
     # buttons must be SIBLINGS: a button nested in another button's if-block never
     # fires (the outer state is False on the inner click's rerun).
+    def do_reveal(photo):
+        """Ask the deployed model + log the round. Shared by Reveal and Guess again."""
+        try:
+            res = guess(photo["bytes"])
+            st.session_state["revealed"] = res
+            if "guesses" in res:
+                src = "mapillary" if str(photo["title"]).startswith("mapillary:") \
+                    else "playset"
+                log_feedback(photo["bytes"], photo["country"], res["guesses"],
+                             src, res.get("model_version"))
+        except Exception as e:
+            st.warning(f"endpoint unreachable: {e}")
+
     ba, bb = st.columns([1, 1])
-    if ba.button("New photo") or bb.button("Try another"):
+    if ba.button("New photo"):
         st.session_state.pop("photo", None)
         st.session_state.pop("revealed", None)
+    guess_again = bb.button("Guess again (same photo)",
+                            help="Re-asks the deployed model. The answer moves "
+                                 "when a new version ships.")
     if "photo" not in st.session_state or st.session_state.get("photo_live") != live:
         mly = live_mapillary_photo() if live else None
         if live:
@@ -239,18 +255,8 @@ with tab_play:
         c1.image(photo["bytes"], use_container_width=True)
         with c2:
             if st.button("Reveal model guess + truth", type="primary",
-                         use_container_width=True):
-                try:
-                    res = guess(photo["bytes"])
-                    st.session_state["revealed"] = res
-                    if "guesses" in res:
-                        src = "mapillary" if str(photo["title"]).startswith("mapillary:") \
-                            else "playset"
-                        log_feedback(photo["bytes"], photo["country"],
-                                     res["guesses"], src,
-                                     res.get("model_version"))   # once per reveal
-                except Exception as e:
-                    st.warning(f"endpoint unreachable: {e}")
+                         use_container_width=True) or guess_again:
+                do_reveal(photo)
             res = st.session_state.get("revealed")
             if res and "guesses" in res:
                 hit = res["guesses"][0]["code"] == photo["country"]
@@ -267,6 +273,9 @@ with tab_play:
                            "credits in playset/ATTRIBUTION.json). Every revealed "
                            "round feeds the next retrain -- docs/FEEDBACK-LOOP.md.")
 
-st.caption("top-1 52.3% / top-5 79.8% over 173 countries, held-out places. "
-           "Numbers, caveats and the eval maps: "
-           "[github.com/MagicLex/where-on-earth](https://github.com/MagicLex/where-on-earth)")
+import inspect
+_paste_ok = "accept_file" in inspect.signature(st.chat_input).parameters
+st.caption(f"top-1 52.3% / top-5 79.8% over 173 countries, held-out places. "
+           f"Numbers, caveats and the eval maps: "
+           f"[github.com/MagicLex/where-on-earth](https://github.com/MagicLex/where-on-earth) "
+           f"· streamlit {st.__version__} · paste {'supported' if _paste_ok else 'UNSUPPORTED'}")
