@@ -12,16 +12,27 @@ training at all) to justify existing.
 
 ## The result
 
-The corpus is in: **354,064 train embeddings across 217 countries** (31 OSV5M zip
-shards, per-country cap so DE/US/FR/RU/JP stop at 5,100 while the median country
-keeps ~900) plus 20,512 held-out test embeddings. The training run is in flight;
-this table gets the held-out numbers when it lands.
+**Top-1 52.3%, top-5 79.8% across 173 countries, on held-out places the model
+never saw.** The champion (a one-hidden-layer MLP on frozen CLIP ViT-B/32
+embeddings) is 2.5x the CLIP zero-shot baseline it had to beat.
 
-| metric | value |
-|---|---:|
-| top-1 (held-out cells) | pending |
-| top-5 (held-out cells) | pending |
-| CLIP zero-shot top-1 (the bar to clear) | pending |
+407,340 images embedded from 33 OSV5M zip shards (per-country cap: DE/US/FR/RU/JP
+stop at ~5,100, the median country keeps ~900), split by quadtree cell into
+330,955 train / 54,816 test rows over 1,563 held-out cells.
+
+| config | top-1 | top-5 |
+|---|---:|---:|
+| majority class (always US) | 1.4% | 7.8% |
+| CLIP zero-shot ("a photo taken in X") | 21.2% | 50.8% |
+| centroid (nearest class-mean) | 27.6% | 56.0% |
+| logistic regression | 49.3% | 77.6% |
+| **MLP (champion)** | **52.3%** | **79.8%** |
+
+Where it knows the world: strongest on countries with distinctive roadscapes and
+solid Mapillary coverage (Pakistan 99%, Zambia 89%, Kuwait 88%, Nigeria 87%,
+Iceland 86%), weakest where coverage is thin or the scenery is generic
+(Montenegro 12%, Cambodia 3%, Ukraine ~0% on few test photos). The full
+per-country table ships in `assets/per_country_acc.json`.
 
 ![Accuracy map](assets/accuracy_map.png)
 ![Best and worst countries](assets/best_worst.png)
